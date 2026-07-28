@@ -1,0 +1,31 @@
+.page { display: grid; gap: 24px; }
+.loading, .errorBox { min-height: 180px; display: grid; place-items: center; color: var(--color-text-secondary); }
+.errorBox { padding: 20px; background: var(--color-danger-light); border: 1px solid var(--color-danger); color: var(--color-danger); border-radius: var(--radius-md); }
+.intro, .sectionHeader { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.intro h2, .sectionHeader h3 { margin: 0; color: var(--color-text); }
+.intro h2 { font-size: 20px; }
+.intro p, .sectionHeader p { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 13px; }
+.updated, .sectionHeader > span { color: var(--color-text-light); font-size: 12px; white-space: nowrap; }
+.stale { color: var(--color-danger); font-size: 12px; white-space: nowrap; }
+.tableSection, .modelSection { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.tableSection { overflow: hidden; }
+.sectionHeader { padding: 18px 20px; align-items: center; }
+.sectionHeader h3 { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.tableWrap { overflow-x: auto; border-top: 1px solid var(--color-border); }
+table { width: 100%; border-collapse: collapse; min-width: 680px; }
+th, td { padding: 14px 20px; text-align: left; font-size: 13px; border-bottom: 1px solid var(--color-border); }
+th { background: var(--color-bg); color: var(--color-text-secondary); font-weight: 600; }
+td { color: var(--color-text); font-variant-numeric: tabular-nums; }
+td:not(:first-child), .modelRow span { font-family: var(--font-mono); }
+tbody tr:last-child td { border-bottom: 0; }
+.statusOk, .statusError { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.statusOk { color: var(--color-success); }
+.statusError { color: var(--color-danger); }
+.statusOk i, .statusError i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.modelSection { padding-bottom: 6px; }
+.modelList { border-top: 1px solid var(--color-border); }
+.modelRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 20px; border-bottom: 1px solid var(--color-border); font-size: 13px; }
+.modelRow:last-child { border-bottom: 0; }
+.modelRow strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modelRow span { color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .intro, .sectionHeader { align-items: flex-start; flex-direction: column; gap: 6px; } .sectionHeader, .modelRow { padding-left: 16px; padding-right: 16px; } }

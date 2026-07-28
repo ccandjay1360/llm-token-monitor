@@ -1,0 +1,322 @@
+.widget {
+  position: relative;
+  display: flex;
+  min-height: 100dvh;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px;
+  background: #eef1ee;
+  color: #202422;
+  font-family: "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  isolation: isolate;
+  user-select: none;
+}
+
+.characterLayer {
+  position: absolute;
+  z-index: -2;
+  top: 86px;
+  right: -46px;
+  width: clamp(285px, 78%, 360px);
+  height: calc(100% - 86px);
+  overflow: hidden;
+  opacity: .96;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, .42) 24%, #000 48%);
+  mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, .42) 24%, #000 48%);
+}
+
+.characterLayer video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+}
+
+.titlebar,
+.providerBar,
+.metrics,
+.footer,
+.status,
+.error,
+.skeleton {
+  position: relative;
+  z-index: 1;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 4px 0 8px;
+  -webkit-app-region: drag;
+}
+
+.dragHandle,
+.windowActions,
+.providerBar,
+.footer,
+.providerTabs {
+  display: flex;
+  align-items: center;
+}
+
+.dragHandle {
+  gap: 7px;
+  color: #202422;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.dragHandle small {
+  padding-left: 7px;
+  border-left: 1px solid rgba(32, 36, 34, .2);
+  color: #717974;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.windowActions {
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.windowActions button,
+.refreshButton,
+.footer button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: #68706c;
+}
+
+.windowActions button {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+}
+
+.windowActions button:hover,
+.refreshButton:hover:not(:disabled) {
+  background: rgba(32, 36, 34, .08);
+  color: #202422;
+}
+
+.windowActions .closeButton:hover {
+  background: #fdebed;
+  color: #b4232f;
+}
+
+.providerBar {
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 8px;
+  border: 1px solid rgba(86, 97, 91, .22);
+  border-radius: 8px;
+  background: rgba(251, 252, 250, .92);
+  -webkit-app-region: no-drag;
+}
+
+.providerTabs {
+  min-width: 0;
+  gap: 3px;
+}
+
+.providerTabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 92px;
+  padding: 6px 7px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #606763;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.providerTabs button:hover,
+.providerTabs .providerActive {
+  background: #e5f4ed;
+  color: #066348;
+}
+
+.providerTabs i {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.okDot { background: #087f5b; }
+.errorDot { background: #b4232f; }
+
+.refreshButton {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 6px;
+}
+
+.refreshButton:disabled { opacity: .45; }
+.spinning { animation: spin .8s linear infinite; }
+
+.metrics {
+  display: grid;
+  width: clamp(170px, 43%, 205px);
+  height: clamp(220px, 62dvh, 320px);
+  flex: 0 0 auto;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(86, 97, 91, .22);
+  border-radius: 8px;
+  background: rgba(251, 252, 250, .93);
+}
+
+.metric {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  padding: 6px 10px 6px 13px;
+  border-bottom: 1px solid rgba(86, 97, 91, .16);
+}
+
+.metric:last-child { border-bottom: 0; }
+
+.metric::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 2px;
+  height: 22px;
+  transform: translateY(-50%);
+  background: #087f5b;
+  content: "";
+}
+
+.metric span {
+  display: block;
+  margin-bottom: 1px;
+  color: #68706c;
+  font-size: 10px;
+}
+
+.metric strong {
+  display: block;
+  overflow: hidden;
+  color: #202422;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status,
+.error {
+  display: grid;
+  width: clamp(170px, 43%, 205px);
+  height: clamp(220px, 62dvh, 320px);
+  flex: 0 0 auto;
+  min-height: 0;
+  margin-top: 8px;
+  place-items: center;
+  padding: 12px;
+  border: 1px dashed rgba(86, 97, 91, .28);
+  border-radius: 8px;
+  background: rgba(251, 252, 250, .88);
+  color: #68706c;
+  font-size: 12px;
+  text-align: center;
+}
+
+.error { color: #b4232f; }
+
+.skeleton {
+  display: grid;
+  width: clamp(170px, 43%, 205px);
+  height: clamp(220px, 62dvh, 320px);
+  flex: 0 0 auto;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(86, 97, 91, .22);
+  border-radius: 8px;
+  background: rgba(86, 97, 91, .16);
+}
+
+.skeleton span {
+  background: rgba(251, 252, 250, .9);
+}
+
+.skeleton span::after {
+  display: block;
+  width: 58%;
+  height: 9px;
+  margin: 42px 14px 0;
+  border-radius: 3px;
+  background: rgba(96, 103, 99, .13);
+  content: "";
+}
+
+.footer {
+  justify-content: space-between;
+  min-height: 28px;
+  margin-top: auto;
+  padding: 0 2px 0 4px;
+  color: #68706c;
+  font-size: 10px;
+  -webkit-app-region: no-drag;
+}
+
+.fresh { color: #68706c; }
+.stale { color: #b4232f; }
+
+.footer button {
+  gap: 4px;
+  min-height: 24px;
+  padding: 3px 7px;
+  border: 1px solid rgba(6, 99, 72, .25);
+  border-radius: 6px;
+  background: #e5f4ed;
+  color: #066348;
+  font-size: 10px;
+}
+
+.footer button:hover { background: #d5eee3; }
+
+.windowActions button:active,
+.providerTabs button:active,
+.refreshButton:active:not(:disabled),
+.footer button:active { transform: translateY(1px); }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinning { animation: none; }
+}
+
+@media (max-height: 380px) {
+  .metric { padding-top: 4px; padding-bottom: 4px; }
+  .footer { margin-top: 4px; }
+}

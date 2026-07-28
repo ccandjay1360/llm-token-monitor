@@ -1,0 +1,64 @@
+.scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.label {
+  color: var(--color-text-light);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 190px;
+  height: 34px;
+  padding: 0 10px;
+  color: var(--color-primary-dark);
+  background: var(--color-primary-light);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.control select {
+  min-width: 0;
+  flex: 1;
+  appearance: none;
+  color: var(--color-text);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.control select:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 5px;
+  border-radius: 2px;
+}
+
+.control > svg:last-child {
+  pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  .scope {
+    width: 100%;
+  }
+
+  .label {
+    display: none;
+  }
+
+  .control {
+    width: 100%;
+  }
+}

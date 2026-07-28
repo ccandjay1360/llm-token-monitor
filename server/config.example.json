@@ -1,0 +1,42 @@
+{
+  "refreshIntervalSec": 300,
+  "providers": [
+    {
+      "id": "oneapi-prod",
+      "name": "OneAPI 主站",
+      "type": "oneapi",
+      "baseUrl": "https://your-oneapi-host.com",
+      "apiToken": "your-system-access-token-here",
+      "enabled": true
+    },
+    {
+      "id": "site-a",
+      "name": "某商业中转站A",
+      "type": "browser",
+      "loginUrl": "https://example.com/login",
+      "loginWaitUrl": "**/dashboard**",
+      "dataUrl": "https://example.com/dashboard",
+      "selectors": {
+        "balance": ".balance-value",
+        "usedQuota": ".used-quota",
+        "totalTokens": ".total-tokens"
+      },
+      "waitMs": 3000,
+      "enabled": true
+    },
+    {
+      "id": "site-b",
+      "name": "某商业中转站B",
+      "type": "browser",
+      "loginUrl": "https://example2.com/login",
+      "loginWaitUrl": "**/console**",
+      "dataUrl": "https://example2.com/console/usage",
+      "selectors": {
+        "balance": "[data-testid='balance']",
+        "usedQuota": "[data-testid='used']"
+      },
+      "waitMs": 5000,
+      "enabled": true
+    }
+  ]
+}

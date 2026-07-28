@@ -1,0 +1,166 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.subtitle {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-top: -8px;
+}
+
+.loading, .errorBox {
+  padding: 24px;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+.errorBox {
+  background: var(--color-danger-light);
+  border-radius: var(--radius-md);
+  color: var(--color-danger);
+}
+
+.chartCard {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  border: 1px solid var(--color-border);
+}
+
+.chartCard h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--color-text);
+}
+
+.emptyLatency {
+  height: 260px;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-light);
+  font-size: 13px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-top: 3px solid var(--color-success);
+  transition: border-color var(--transition);
+}
+
+.card:hover {
+  border-color: var(--color-border-strong);
+}
+
+.card.fail {
+  border-top-color: var(--color-danger);
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.nameBox {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: var(--color-text);
+}
+
+.name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.meta {
+  font-size: 11px;
+  color: var(--color-text-light);
+  margin-top: 2px;
+}
+
+.statusOk, .statusFail {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.statusOk {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+
+.statusFail {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.metricLabel {
+  font-size: 11px;
+  color: var(--color-text-light);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.metricValue {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+}
+
+@media (max-width: 640px) {
+  .chartCard { padding: 16px 8px; }
+  .grid { grid-template-columns: 1fr; }
+}
+
+.errorDetail {
+  margin-top: 12px;
+  padding: 8px;
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-family: monospace;
+  word-break: break-all;
+}

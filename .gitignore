@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+release/
+
+# Local configuration and runtime data (may contain secrets)
+server/config.json
+server/cache.json
+server/history.json
+server/auth/
+HANDOVER.md
+
+# Playwright browser binaries
+.playwright/
+
+# Editors
+.claude/
+.vscode/
+.idea/
+*.local
+
+# Logs
+*.log
+npm-debug.log*
