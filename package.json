@@ -38,6 +38,7 @@
   "build": {
     "appId": "com.cc.tokenmonitor",
     "asar": true,
+    "publish": null,
     "electronDist": "node_modules/electron/dist",
     "icon": "build/icon.ico",
     "directories": {
