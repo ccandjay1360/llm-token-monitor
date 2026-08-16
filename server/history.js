@@ -14,6 +14,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getDailyDateRange } from './usage-date.js'
+import { writeJsonAtomically } from './json-store.js'
+import { QUOTA_PER_DOLLAR } from './providers.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = process.env.TOKEN_MONITOR_DATA_DIR
@@ -38,7 +40,7 @@ function loadHistory() {
 }
 
 function saveHistory(history) {
-  fs.writeFileSync(HISTORY_PATH, JSON.stringify(history, null, 2))
+  writeJsonAtomically(HISTORY_PATH, history)
 }
 
 // 写入一次快照：在 refresh 完成后调用
@@ -54,10 +56,14 @@ export function recordSnapshot(providers) {
   for (const p of providers) {
     if (!p?.id || !p?.data) continue
     // 同一天多次刷新：保留最新的一次
+    // balance 统一记录美元：browser 类型原生是美元；OneAPI 的 quota 是内部单位
+    // （QUOTA_PER_DOLLAR = 500000），必须换算，否则两类站点单位相差 50 万倍
     history[today][p.id] = {
       todayTokens: p.data.todayTokens || 0,
       todayCost: p.data.todayCost || 0,
-      balance: p.data.balance || p.data.quota || 0,
+      balance: p.data.balance != null
+        ? p.data.balance
+        : (p.data.quota || 0) / QUOTA_PER_DOLLAR,
       cacheHitRate: p.data.cacheHitRate || 0,
       name: p.name,
       type: p.type,

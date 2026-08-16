@@ -2,12 +2,22 @@ const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, shell } = require(
 const fs = require('node:fs')
 const path = require('node:path')
 const net = require('node:net')
+const http = require('node:http')
+const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
+const {
+  apiBaseUrl,
+  isTokenMonitorHealthResponse,
+  resolveApiServerCwd,
+  shouldStartApiServer,
+} = require('./api-server-runtime.cjs')
 
 const appRoot = app.isPackaged ? app.getAppPath() : path.resolve(__dirname, '..')
 let widgetWindow = null
 let dashboardWindow = null
 let tray = null
+let apiServerProcess = null
+let apiRuntime = { port: Number(process.env.PORT) || 3002, token: process.env.TOKEN_MONITOR_API_TOKEN || '' }
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 const DEFAULT_WIDGET_SIZE = { width: 480, height: 454 }
 const WIDGET_SIZE_LIMITS = { minWidth: 320, minHeight: 360, maxWidth: 480, maxHeight: 620 }
@@ -52,43 +62,125 @@ function resetWidgetSize() {
   saveWidgetSize()
 }
 
-function isApiRunning() {
+function isApiRunning(port, token) {
   return new Promise((resolve) => {
-    const socket = net.connect({ host: '127.0.0.1', port: 3002 })
-    socket.once('connect', () => {
-      socket.destroy()
-      resolve(true)
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
+    const request = http.get({
+      host: '127.0.0.1',
+      port,
+      path: '/api/health',
+      headers: token ? { 'x-token-monitor-auth': token } : {},
+    }, (response) => {
+      let body = ''
+      response.setEncoding('utf8')
+      response.on('data', (chunk) => {
+        body += chunk
+      })
+      response.on('end', () => {
+        try {
+          finish(isTokenMonitorHealthResponse(response.statusCode, JSON.parse(body)))
+        } catch {
+          finish(false)
+        }
+      })
     })
-    socket.once('error', () => resolve(false))
+    request.setTimeout(1_500, () => request.destroy())
+    request.once('error', () => finish(false))
   })
+}
+
+function reservePort(port) {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', () => {
+      const address = server.address()
+      const selectedPort = typeof address === 'object' && address ? address.port : null
+      server.close((error) => (error ? reject(error) : resolve(selectedPort)))
+    })
+  })
+}
+
+async function findAvailableApiPort() {
+  try {
+    return await reservePort(3002)
+  } catch {
+    return reservePort(0)
+  }
 }
 
 function runtimeDataPath() {
   return path.join(app.getPath('userData'), 'data')
 }
 
+function runtimeIconPath() {
+  return path.join(appRoot, app.isPackaged ? 'dist' : 'public', 'yukino-icon.png')
+}
+
+function logApiServer(message) {
+  try {
+    const dataPath = runtimeDataPath()
+    fs.mkdirSync(dataPath, { recursive: true })
+    fs.appendFileSync(
+      path.join(dataPath, 'api-server.log'),
+      `${new Date().toISOString()} ${message}\n`,
+      'utf8',
+    )
+  } catch (error) {
+    console.error('Unable to write API server log:', error.message)
+  }
+}
+
 async function ensureApiServer() {
-  if (process.env.NODE_ENV === 'development' || await isApiRunning()) return
+  const apiRunning = apiServerProcess && await isApiRunning(apiRuntime.port, apiRuntime.token)
+  if (!shouldStartApiServer(app.isPackaged, apiRunning)) return
+
+  const apiPort = await findAvailableApiPort()
+  const apiToken = crypto.randomBytes(32).toString('base64url')
   const dataPath = runtimeDataPath()
   fs.mkdirSync(dataPath, { recursive: true })
-  const serverProcess = spawn(process.execPath, [path.join(appRoot, 'server', 'index.js')], {
-    cwd: appRoot,
+  const serverEntry = path.join(appRoot, 'server', 'index.js')
+  const serverProcess = spawn(process.execPath, [serverEntry], {
+    cwd: resolveApiServerCwd(app.isPackaged, appRoot, process.execPath),
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
-      PORT: '3002',
+      PORT: String(apiPort),
+      TOKEN_MONITOR_API_TOKEN: apiToken,
       TOKEN_MONITOR_DATA_DIR: dataPath,
     },
-    detached: true,
     stdio: 'ignore',
     windowsHide: true,
   })
-  serverProcess.unref()
+  apiServerProcess = serverProcess
+  apiRuntime = { port: apiPort, token: apiToken }
+  logApiServer(`spawned API server: pid=${serverProcess.pid || 'unknown'}, port=${apiPort}, entry=${serverEntry}`)
+  serverProcess.once('error', (error) => logApiServer(`API server spawn error: ${error.message}`))
+  serverProcess.once('exit', (code, signal) => {
+    if (apiServerProcess === serverProcess) apiServerProcess = null
+    logApiServer(`API server exited: code=${code}, signal=${signal || 'none'}`)
+  })
 
   for (let attempt = 0; attempt < 30; attempt += 1) {
-    if (await isApiRunning()) return
+    if (await isApiRunning(apiPort, apiToken)) {
+      logApiServer('API server is ready')
+      return
+    }
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
+  stopApiServer()
+  throw new Error('API server did not become ready within 7500ms')
+}
+
+function stopApiServer() {
+  const serverProcess = apiServerProcess
+  apiServerProcess = null
+  if (serverProcess && !serverProcess.killed) serverProcess.kill()
 }
 
 function showWidget() {
@@ -114,10 +206,12 @@ function openDashboard() {
     height: 820,
     minWidth: 960,
     minHeight: 640,
+    icon: runtimeIconPath(),
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#f4f6f4',
     webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -130,8 +224,8 @@ function openDashboard() {
 }
 
 function createTray() {
-  const icon = nativeImage.createFromPath(path.join(appRoot, 'public', 'favicon.svg'))
-  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon)
+  const icon = nativeImage.createFromPath(runtimeIconPath())
+  tray = new Tray(icon.resize({ width: 20, height: 20, quality: 'best' }))
   tray.setToolTip('Token 监控挂件')
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '显示挂件', click: showWidget },
@@ -165,6 +259,7 @@ function createWidgetWindow() {
   widgetWindow = new BrowserWindow({
     ...initialSize,
     ...WIDGET_SIZE_LIMITS,
+    icon: runtimeIconPath(),
     frame: false,
     resizable: true,
     alwaysOnTop: true,
@@ -201,10 +296,18 @@ ipcMain.on('widget:quit', () => {
   app.isQuiting = true
   app.quit()
 })
+ipcMain.on('api:get-config', (event) => {
+  event.returnValue = { baseUrl: apiBaseUrl(apiRuntime.port), token: apiRuntime.token }
+})
 
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
-    await ensureApiServer()
+    try {
+      await ensureApiServer()
+    } catch (error) {
+      logApiServer(`API server startup failed: ${error.message}`)
+      console.error('Unable to start API server:', error.message)
+    }
     createWidgetWindow()
     createTray()
   })
@@ -215,6 +318,11 @@ if (hasSingleInstanceLock) {
 app.on('activate', () => {
   if (!widgetWindow) createWidgetWindow()
   else showWidget()
+})
+
+app.on('before-quit', () => {
+  app.isQuiting = true
+  stopApiServer()
 })
 
 app.on('window-all-closed', (event) => event.preventDefault())

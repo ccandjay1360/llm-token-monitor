@@ -15,7 +15,7 @@
     "desktop": "electron .",
     "build": "vite build",
     "preview": "vite preview",
-    "test:server": "node --test server/usage-date.test.mjs server/cache-metrics.test.mjs server/refresh-cache.test.mjs",
+    "test:server": "node --test server/usage-date.test.mjs server/cache-metrics.test.mjs server/refresh-cache.test.mjs server/browser-session.test.mjs server/browser-lock.test.mjs server/api-auth.test.mjs server/providers.test.mjs server/json-store.test.mjs server/config.test.mjs server/aggregate.test.mjs server/history.test.mjs electron/api-server-runtime.test.cjs",
     "package:win": "npm run build && electron-builder --win nsis"
   },
   "dependencies": {
@@ -58,6 +58,7 @@
       "!node_modules/esbuild/**/*",
       "!node_modules/@esbuild/**/*",
       "!server/**/*.test.mjs",
+      "!electron/**/*.test.cjs",
       "!server/config.json",
       "!server/cache.json",
       "!server/history.json",

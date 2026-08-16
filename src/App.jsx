@@ -1,15 +1,18 @@
-import { useState } from 'react'
+import { useState, lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import Sidebar from './components/Sidebar/Sidebar'
 import Header from './components/Header/Header'
-import Dashboard from './pages/Dashboard/Dashboard'
-import Analytics from './pages/Analytics/Analytics'
-import Providers from './pages/Providers/Providers'
-import Settings from './pages/Settings/Settings'
-import Help from './pages/Help/Help'
 import Widget from './pages/Widget/Widget'
-import Combined from './pages/Combined/Combined'
 import styles from './App.module.css'
+
+// 路由级懒加载：Dashboard/Analytics 等图表页用到 recharts（约 400KB+），
+// 拆分后挂件（?widget=1）首屏无需下载图表库
+const Dashboard = lazy(() => import('./pages/Dashboard/Dashboard'))
+const Analytics = lazy(() => import('./pages/Analytics/Analytics'))
+const Providers = lazy(() => import('./pages/Providers/Providers'))
+const Settings = lazy(() => import('./pages/Settings/Settings'))
+const Help = lazy(() => import('./pages/Help/Help'))
+const Combined = lazy(() => import('./pages/Combined/Combined'))
 
 function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -24,7 +27,8 @@ function App() {
       <div className={styles.mainContent}>
         <Header />
         <div className={styles.dashboardContent}>
-          <Routes>
+          <Suspense fallback={<div style={{ padding: 24, color: '#606763' }}>加载中…</div>}>
+            <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/combined" element={<Combined />} />
@@ -37,7 +41,8 @@ function App() {
             <Route path="/help" element={<Help />} />
             {/* 兜底：未知路由跳转回首页 */}
             <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+            </Routes>
+          </Suspense>
         </div>
       </div>
     </div>

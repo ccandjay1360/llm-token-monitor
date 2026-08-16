@@ -16,8 +16,8 @@ const PRESETS = [
   {
     id: 'wawapi',
     name: 'WawAPI',
-    loginUrl: 'https://wawapi.top/login',
-    dataUrl: 'https://wawapi.top/dashboard',
+    loginUrl: 'https://wawapii.com/login',
+    dataUrl: 'https://wawapii.com/dashboard',
     note: '商业中转站，需登录后用拾取按钮配置字段',
   },
   {
@@ -586,7 +586,7 @@ function Settings() {
           <Save size={14} />
           {saving ? '保存中...' : '保存配置'}
         </button>
-        {savedAt && <span className={styles.savedHint}>已保存，重启后端代理后生效</span>}
+        {savedAt && <span className={styles.savedHint}>已保存，下次刷新即生效</span>}
         {error && <span className={styles.errorHint}>{error}</span>}
       </div>
     </div>

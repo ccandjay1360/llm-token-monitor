@@ -4,6 +4,8 @@ node_modules/
 # Build outputs
 dist/
 release/
+release-fixed/
+.dev-userdata*/
 
 # Local configuration and runtime data (may contain secrets)
 server/config.json
@@ -14,6 +16,9 @@ HANDOVER.md
 
 # Playwright browser binaries
 .playwright/
+
+# Debug temporary files
+.tmp-*
 
 # Editors
 .claude/

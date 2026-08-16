@@ -8,10 +8,17 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawn } from 'node:child_process'
-import { createServer } from 'node:net'
 import { buildDailyUsagePath } from './usage-date.js'
 import { extractCacheUsage } from './cache-metrics.js'
+import {
+  assertBrowserUrl,
+  assertSafeProviderId,
+  getBrowserSessionError,
+  getLoginRedirectError,
+  isAuthHttpStatus,
+  isSafeProviderId,
+} from './browser-session.js'
+import { getProviderBrowserEpoch, withProviderBrowserLock } from './browser-lock.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -31,11 +38,41 @@ const AUTH_DIR = process.env.AUTH_DIR
     : path.resolve(__dirname, 'auth')
 
 function authFilePath(id) {
-  return path.resolve(AUTH_DIR, `${id}.json`)
+  assertSafeProviderId(id)
+  const authRoot = `${path.resolve(AUTH_DIR)}${path.sep}`
+  const filePath = path.resolve(AUTH_DIR, `${id}.json`)
+  if (!filePath.startsWith(authRoot)) throw new Error('provider id 无效')
+  return filePath
 }
 
 export function hasAuthState(id) {
+  if (!isSafeProviderId(id)) return false
   return fs.existsSync(authFilePath(id))
+}
+
+async function saveAuthState(context, authFile) {
+  const temporaryFile = `${authFile}.${process.pid}.${Date.now()}.tmp`
+  const backupFile = `${authFile}.bak`
+  let originalMoved = false
+
+  try {
+    fs.mkdirSync(path.dirname(authFile), { recursive: true })
+    await context.storageState({ path: temporaryFile })
+
+    if (fs.existsSync(backupFile)) fs.rmSync(backupFile, { force: true })
+    if (fs.existsSync(authFile)) {
+      fs.renameSync(authFile, backupFile)
+      originalMoved = true
+    }
+    fs.renameSync(temporaryFile, authFile)
+    if (originalMoved) fs.rmSync(backupFile, { force: true })
+  } catch (error) {
+    if (fs.existsSync(temporaryFile)) fs.rmSync(temporaryFile, { force: true })
+    if (originalMoved && !fs.existsSync(authFile) && fs.existsSync(backupFile)) {
+      fs.renameSync(backupFile, authFile)
+    }
+    throw error
+  }
 }
 
 function authDirExists() {
@@ -45,8 +82,20 @@ function authDirExists() {
 }
 
 function launchInteractiveBrowser() {
-  // Edge uses the installed browser binary for user-facing flows. It does not open the user's profile.
-  return chromium.launch({ channel: 'msedge', headless: false })
+  const executable = findEdgeExecutable()
+  if (!executable) throw new Error('未找到系统 Edge，请安装或修复 Microsoft Edge')
+
+  return chromium.launch({
+    executablePath: executable,
+    headless: false,
+    ignoreDefaultArgs: ['--no-startup-window'],
+    args: [
+      '--new-window',
+      '--start-maximized',
+      '--no-first-run',
+      '--no-default-browser-check',
+    ],
+  })
 }
 
 function launchHeadlessBrowser() {
@@ -60,33 +109,6 @@ function findEdgeExecutable() {
     path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
   ].filter(Boolean)
   return candidates.find((candidate) => fs.existsSync(candidate)) || null
-}
-
-function reserveDebugPort() {
-  return new Promise((resolve, reject) => {
-    const server = createServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      const port = typeof address === 'object' && address ? address.port : null
-      server.close((error) => (error ? reject(error) : resolve(port)))
-    })
-  })
-}
-
-async function connectToNativeEdge(port, timeoutMs = 15_000) {
-  const endpoint = `http://127.0.0.1:${port}`
-  const deadline = Date.now() + timeoutMs
-
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`${endpoint}/json/version`)
-      if (response.ok) return await chromium.connectOverCDP(endpoint)
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 250))
-  }
-
-  throw new Error('无法连接原生 Edge 登录窗口')
 }
 
 function loginFinishScript() {
@@ -116,10 +138,26 @@ function loginFinishScript() {
   }
 }
 
-async function getLoginPage(context) {
-  const page = context.pages().find((item) => item.url() !== 'about:blank')
-  if (page) return page
-  return context.waitForEvent('page', { timeout: 15_000 })
+const MAX_BROWSER_WAIT_MS = 15_000
+// 标量元素慢等上限：SPA 数据接口返回晚于固定 waitMs 时兜底
+const FIELD_ELEMENT_WAIT_MS = 8_000
+
+// 两段式元素查询：先立即查询（快路径），未命中再等待元素挂载（慢路径）。
+// 避免固定 waitMs 后元素尚未渲染导致字段间歇性抓空（余额变 0）
+async function querySelectorWithWait(page, selector) {
+  const immediate = await page.$(selector)
+  if (immediate) return immediate
+  try {
+    return await page.waitForSelector(selector, { state: 'attached', timeout: FIELD_ELEMENT_WAIT_MS })
+  } catch {
+    return null
+  }
+}
+
+function normalizeWaitMs(value, fallback = 3000) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return fallback
+  return Math.min(Math.max(number, 0), MAX_BROWSER_WAIT_MS)
 }
 
 function normalizePercentage(value) {
@@ -143,40 +181,54 @@ function calculateCacheHitRate(payload) {
 }
 
 async function fetchUsageMetrics(page, cfg) {
-  let usageUrl
-  try {
-    usageUrl = cfg.usageUrl
-      ? new URL(cfg.usageUrl).toString()
-      : new URL('/usage', cfg.dataUrl).toString()
-  } catch {
-    return null
-  }
+  const baseDataUrl = assertBrowserUrl(cfg.dataUrl, 'dataUrl')
+  const usageUrl = assertBrowserUrl(
+    cfg.usageUrl ? cfg.usageUrl : new URL('/usage', baseDataUrl).toString(),
+    'usageUrl',
+  )
 
   try {
     await page.goto(usageUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-    await page.waitForTimeout(Math.min(Math.max(Number(cfg.waitMs) || 3000, 500), 5000))
+    await page.waitForTimeout(normalizeWaitMs(cfg.waitMs))
     const dailyUsagePath = buildDailyUsagePath(new Date(), cfg.timezone || 'Asia/Shanghai')
-    const payload = await page.evaluate(async (pathname) => {
+    const response = await page.evaluate(async ({ pathname, timeoutMs }) => {
       const token = localStorage.getItem('auth_token')
       const headers = token ? { Authorization: `Bearer ${token}` } : {}
-      const response = await fetch(pathname, { headers })
-      if (!response.ok) return null
-      return response.json()
-    }, dailyUsagePath)
+      const controller = new AbortController()
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
+      try {
+        const response = await fetch(pathname, { headers, signal: controller.signal })
+        return {
+          ok: response.ok,
+          status: response.status,
+          payload: response.ok ? await response.json() : null,
+        }
+      } finally {
+        window.clearTimeout(timeoutId)
+      }
+    }, { pathname: dailyUsagePath, timeoutMs: MAX_BROWSER_WAIT_MS })
+
+    if (isAuthHttpStatus(response?.status)) {
+      return { authError: true, status: response.status }
+    }
+    if (!response?.ok) return null
+    const payload = response.payload
 
     const detected = calculateCacheHitRate(payload)
     const actualCost = Number(payload?.data?.total_actual_cost)
     const totalTokens = Number(payload?.data?.total_tokens)
     const cacheUsage = extractCacheUsage(payload?.data)
     return {
-      ...(detected != null ? { cacheHitRate: detected } : {}),
-      ...(Number.isFinite(actualCost) ? { todayCost: actualCost } : {}),
-      ...(Number.isFinite(totalTokens) ? { todayTokens: totalTokens } : {}),
-      ...(cacheUsage ? {
-        cacheInputTokens: cacheUsage.inputTokens,
-        cacheCreationTokens: cacheUsage.creationTokens,
-        cacheReadTokens: cacheUsage.readTokens,
-      } : {}),
+      metrics: {
+        ...(detected != null ? { cacheHitRate: detected } : {}),
+        ...(Number.isFinite(actualCost) ? { todayCost: actualCost } : {}),
+        ...(Number.isFinite(totalTokens) ? { todayTokens: totalTokens } : {}),
+        ...(cacheUsage ? {
+          cacheInputTokens: cacheUsage.inputTokens,
+          cacheCreationTokens: cacheUsage.creationTokens,
+          cacheReadTokens: cacheUsage.readTokens,
+        } : {}),
+      },
     }
   } catch {
     return null
@@ -353,37 +405,31 @@ function parseTable(page, tableSelector) {
 // ===== 登录流程 =====
 // 启动有头浏览器，打开 loginUrl，注入「完成登录」按钮
 // 用户手动登录后点击该按钮，浏览器保存 storageState 并关闭
-export async function login(cfg) {
+export function login(cfg) {
+  assertSafeProviderId(cfg.id)
+  return withProviderBrowserLock(cfg.id, () => loginUnlocked(cfg), { priority: true })
+}
+
+async function loginUnlocked(cfg) {
   authDirExists()
 
   const { id, loginUrl, loginWaitUrl = '' } = cfg
   if (!loginUrl) {
     throw new Error('缺少 loginUrl')
   }
+  const safeLoginUrl = assertBrowserUrl(loginUrl, 'loginUrl')
 
-  const edgeExecutable = findEdgeExecutable()
-  if (!edgeExecutable) throw new Error('未找到系统 Edge，请安装或修复 Microsoft Edge')
+  const browser = await launchInteractiveBrowser()
+  let context
 
-  const profileDir = path.resolve(AUTH_DIR, 'edge-profiles', id)
-  fs.mkdirSync(profileDir, { recursive: true })
-  const debugPort = await reserveDebugPort()
-  const edgeProcess = spawn(edgeExecutable, [
-    `--remote-debugging-port=${debugPort}`,
-    `--user-data-dir=${profileDir}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    loginUrl,
-  ], { detached: false, stdio: 'ignore', windowsHide: false })
-
-  let browser
   try {
-    browser = await connectToNativeEdge(debugPort)
-    const context = browser.contexts()[0]
-    if (!context) throw new Error('原生 Edge 未创建浏览器上下文')
-
+    context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+    })
     await context.addInitScript(loginFinishScript)
-    const page = await getLoginPage(context)
-    await page.waitForLoadState('domcontentloaded').catch(() => {})
+    const page = await context.newPage()
+    await page.goto(safeLoginUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    await page.bringToFront()
     await page.evaluate(loginFinishScript)
 
     await page.waitForFunction(() => window.__tokenMonitorLoginDone === true, { timeout: 600_000 })
@@ -392,11 +438,11 @@ export async function login(cfg) {
       await page.waitForURL(loginWaitUrl, { timeout: 30_000 }).catch(() => {})
     }
 
-    await context.storageState({ path: authFilePath(id) })
+    await saveAuthState(context, authFilePath(id))
     return { ok: true, savedAt: Date.now() }
   } finally {
-    await browser?.close().catch(() => {})
-    if (!edgeProcess.killed) edgeProcess.kill()
+    await context?.close().catch(() => {})
+    await browser.close().catch(() => {})
   }
 }
 
@@ -404,11 +450,19 @@ export async function login(cfg) {
 // 加载 storageState，访问 dataUrl，按 selectors 提取数字字段
 // selectors 结构：{ balance, todayTokens, todayCost, cacheHitRate, modelTable }
 // 返回标量字段 + 模型表（解析后的模型数组）
-export async function fetchViaBrowser(cfg) {
-  const { id, dataUrl, selectors = {}, waitMs = 3000 } = cfg
+export function fetchViaBrowser(cfg) {
+  assertSafeProviderId(cfg.id)
+  return withProviderBrowserLock(cfg.id, () => fetchViaBrowserUnlocked(cfg))
+}
+
+async function fetchViaBrowserUnlocked(cfg) {
+  const { id, dataUrl, selectors = {} } = cfg
+  const browserEpoch = getProviderBrowserEpoch(id)
+  const waitMs = normalizeWaitMs(cfg.waitMs)
   if (!dataUrl) {
     throw new Error('缺少 dataUrl')
   }
+  const safeDataUrl = assertBrowserUrl(dataUrl, 'dataUrl')
 
   const authFile = authFilePath(id)
   if (!fs.existsSync(authFile)) {
@@ -421,19 +475,20 @@ export async function fetchViaBrowser(cfg) {
     viewport: { width: 1280, height: 800 },
   })
   const page = await context.newPage()
-  const usagePage = await context.newPage()
 
   try {
-    // 使用页与仪表盘相互独立，同时抓取以避免两次固定等待串行累加。
-    const usageMetricsPromise = fetchUsageMetrics(usagePage, cfg)
-
     // 用 domcontentloaded + waitMs 替代 networkidle，避免 SPA 持续网络请求导致卡住
-    await page.goto(dataUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    const dataResponse = await page.goto(safeDataUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    if (isAuthHttpStatus(dataResponse?.status())) throw new Error('登录态已失效，请重新登录')
     if (waitMs > 0) await page.waitForTimeout(waitMs)
+    const redirectError = getLoginRedirectError(page.url(), cfg.loginUrl)
+    if (redirectError) throw new Error(redirectError)
 
     const rawText = {}
     const numbers = {}
     let models = []
+    let matchedFields = 0
+    const attemptedFields = Object.values(selectors).filter(Boolean).length
 
     for (const [field, selector] of Object.entries(selectors)) {
       if (!selector) continue
@@ -444,6 +499,7 @@ export async function fetchViaBrowser(cfg) {
           const parsed = await parseTable(page, selector)
           if (parsed) {
             models = parseTableToModels(parsed)
+            if (models.length > 0) matchedFields += 1
             rawText[field] = `表格：${parsed.rows.length} 行 × ${parsed.headers.length} 列`
           } else {
             rawText[field] = '<未找到 table 元素>'
@@ -456,9 +512,13 @@ export async function fetchViaBrowser(cfg) {
 
       // 普通标量字段
       try {
-        const el = await page.$(selector)
+        // 两段式抓取：先快查（多数情况元素已渲染），
+        // 未命中再等待元素出现——SPA 数据晚于固定 waitMs 渲染时，
+        // 一次性查询会落空导致余额间歇性抓成 0
+        const el = await querySelectorWithWait(page, selector)
         if (el) {
           const text = (await el.textContent()) || ''
+          if (hasNumber(text)) matchedFields += 1
           rawText[field] = text.trim()
           numbers[field] = parseNumber(text)
         } else {
@@ -471,7 +531,9 @@ export async function fetchViaBrowser(cfg) {
       }
     }
 
-    const usageMetrics = await usageMetricsPromise
+    // 与数据页顺序访问，避免访问令牌过期时两个页面同时刷新令牌。
+    const usageResult = await fetchUsageMetrics(page, { ...cfg, dataUrl: safeDataUrl })
+    const usageMetrics = usageResult?.metrics || null
     if (usageMetrics?.todayTokens != null) {
       numbers.todayTokens = usageMetrics.todayTokens
       rawText.todayTokens = `${usageMetrics.todayTokens}（今日使用接口）`
@@ -488,6 +550,21 @@ export async function fetchViaBrowser(cfg) {
     if (usageMetrics?.todayCost != null) {
       numbers.todayCost = usageMetrics.todayCost
       rawText.todayCost = `$${usageMetrics.todayCost.toFixed(4)}（今日使用接口）`
+    }
+
+    const sessionError = getBrowserSessionError({
+      currentUrl: page.url(),
+      loginUrl: cfg.loginUrl,
+      attemptedFields,
+      matchedFields,
+      hasUsageMetrics: !!usageMetrics && Object.keys(usageMetrics).length > 0,
+      hasAuthError: !!usageResult?.authError,
+    })
+    if (sessionError) throw new Error(sessionError)
+
+    // 保存页面续签后的 Cookie 和 localStorage Token，下次抓取继续使用新状态。
+    if (getProviderBrowserEpoch(id) === browserEpoch) {
+      await saveAuthState(context, authFile)
     }
 
     return {
@@ -514,11 +591,19 @@ export async function fetchViaBrowser(cfg) {
 
 // ===== 选择器自动识别 =====
 // 根据字段标签与附近的数字值推断标量选择器，并按表头识别模型分布表。
-export async function autoDetectSelectors(cfg) {
-  const { id, dataUrl, waitMs = 3000 } = cfg
+export function autoDetectSelectors(cfg) {
+  assertSafeProviderId(cfg.id)
+  return withProviderBrowserLock(cfg.id, () => autoDetectSelectorsUnlocked(cfg))
+}
+
+async function autoDetectSelectorsUnlocked(cfg) {
+  const { id, dataUrl } = cfg
+  const browserEpoch = getProviderBrowserEpoch(id)
+  const waitMs = normalizeWaitMs(cfg.waitMs)
   const authFile = authFilePath(id)
   if (!fs.existsSync(authFile)) throw new Error('未找到登录态文件')
   if (!dataUrl) throw new Error('缺少 dataUrl')
+  const safeDataUrl = assertBrowserUrl(dataUrl, 'dataUrl')
 
   const browser = await launchHeadlessBrowser()
   const context = await browser.newContext({
@@ -528,10 +613,13 @@ export async function autoDetectSelectors(cfg) {
   const page = await context.newPage()
 
   try {
-    await page.goto(dataUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    const dataResponse = await page.goto(safeDataUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    if (isAuthHttpStatus(dataResponse?.status())) throw new Error('登录态已失效，请重新登录')
     if (waitMs > 0) await page.waitForTimeout(waitMs)
+    const redirectError = getLoginRedirectError(page.url(), cfg.loginUrl)
+    if (redirectError) throw new Error(redirectError)
 
-    return await page.evaluate((fieldHints) => {
+    const result = await page.evaluate((fieldHints) => {
       const normalize = (text) => (text || '').toLowerCase().replace(/[\s:：]/g, '')
       const textOf = (el) => (el?.textContent || '').trim()
       const directTextOf = (el) => Array.from(el?.childNodes || [])
@@ -690,6 +778,10 @@ export async function autoDetectSelectors(cfg) {
       todayTokens: ['今日 token', '今日token', '今日令牌', 'today token', 'tokens today'],
       todayCost: ['今日消费', '今日花费', '今日成本', 'today cost', 'today spend'],
     })
+    if (getProviderBrowserEpoch(id) === browserEpoch) {
+      await saveAuthState(context, authFile)
+    }
+    return result
   } finally {
     await browser.close()
   }
@@ -699,12 +791,20 @@ export async function autoDetectSelectors(cfg) {
 // 给定 dataUrl + 登录态 + 选择器，返回每个字段实际抓到的文本
 // 用于在设置页调试选择器是否正确
 // 对 modelTable 字段做特殊处理：解析整个表格返回二维数组
-export async function probeSelectors(cfg) {
-  const { id, dataUrl, selectors = {}, waitMs = 3000 } = cfg
+export function probeSelectors(cfg) {
+  assertSafeProviderId(cfg.id)
+  return withProviderBrowserLock(cfg.id, () => probeSelectorsUnlocked(cfg))
+}
+
+async function probeSelectorsUnlocked(cfg) {
+  const { id, dataUrl, selectors = {} } = cfg
+  const browserEpoch = getProviderBrowserEpoch(id)
+  const waitMs = normalizeWaitMs(cfg.waitMs)
   const authFile = authFilePath(id)
   if (!fs.existsSync(authFile)) {
     throw new Error('未找到登录态文件')
   }
+  const safeDataUrl = assertBrowserUrl(dataUrl, 'dataUrl')
 
   const browser = await launchHeadlessBrowser()
   const context = await browser.newContext({
@@ -715,10 +815,16 @@ export async function probeSelectors(cfg) {
 
   try {
     // 用 domcontentloaded + waitMs 替代 networkidle，避免 SPA 持续网络请求导致卡住
-    await page.goto(dataUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    const dataResponse = await page.goto(safeDataUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    if (isAuthHttpStatus(dataResponse?.status())) throw new Error('登录态已失效，请重新登录')
     if (waitMs > 0) await page.waitForTimeout(waitMs)
 
+    const redirectError = getLoginRedirectError(page.url(), cfg.loginUrl)
+    if (redirectError) throw new Error(redirectError)
+
     const result = {}
+    let matchedFields = 0
+    const attemptedFields = Object.values(selectors).filter(Boolean).length
     for (const [field, selector] of Object.entries(selectors)) {
       if (!selector) continue
 
@@ -729,6 +835,7 @@ export async function probeSelectors(cfg) {
           if (parsed) {
             // 同时生成解析后的模型列表
             const models = parseTableToModels(parsed)
+            if (models.length > 0) matchedFields += 1
             result[field] = {
               selector,
               found: true,
@@ -747,9 +854,10 @@ export async function probeSelectors(cfg) {
 
       // 普通标量字段
       try {
-        const el = await page.$(selector)
+        const el = await querySelectorWithWait(page, selector)
         if (el) {
           const text = (await el.textContent()) || ''
+          if (hasNumber(text)) matchedFields += 1
           result[field] = {
             selector,
             found: true,
@@ -764,7 +872,8 @@ export async function probeSelectors(cfg) {
       }
     }
 
-    const usageMetrics = await fetchUsageMetrics(page, cfg)
+    const usageResult = await fetchUsageMetrics(page, { ...cfg, dataUrl: safeDataUrl })
+    const usageMetrics = usageResult?.metrics || null
     if (usageMetrics?.cacheHitRate != null) {
       result.cacheHitRate = {
         selector: '自动读取 /usage 数据接口',
@@ -780,6 +889,20 @@ export async function probeSelectors(cfg) {
         text: `$${usageMetrics.todayCost.toFixed(4)}`,
         value: usageMetrics.todayCost,
       }
+    }
+
+    const sessionError = getBrowserSessionError({
+      currentUrl: page.url(),
+      loginUrl: cfg.loginUrl,
+      attemptedFields,
+      matchedFields,
+      hasUsageMetrics: !!usageMetrics && Object.keys(usageMetrics).length > 0,
+      hasAuthError: !!usageResult?.authError,
+    })
+    if (sessionError) throw new Error(sessionError)
+
+    if (getProviderBrowserEpoch(id) === browserEpoch) {
+      await saveAuthState(context, authFile)
     }
     return result
   } finally {
@@ -811,8 +934,15 @@ function parseTableToModels(tableInfo) {
 // fieldKey 决定拾取模式：
 //   - 普通字段：拾取点击的元素本身
 //   - 'modelTable'：自动向上找最近的 <table> 元素，拾取整个表格
-export async function pickSelector(cfg, fieldKey) {
-  const { id, dataUrl, waitMs = 3000 } = cfg
+export function pickSelector(cfg, fieldKey) {
+  assertSafeProviderId(cfg.id)
+  return withProviderBrowserLock(cfg.id, () => pickSelectorUnlocked(cfg, fieldKey))
+}
+
+async function pickSelectorUnlocked(cfg, fieldKey) {
+  const { id, dataUrl } = cfg
+  const browserEpoch = getProviderBrowserEpoch(id)
+  const waitMs = normalizeWaitMs(cfg.waitMs)
   const authFile = authFilePath(id)
   if (!fs.existsSync(authFile)) {
     throw new Error('未找到登录态文件，请先登录')
@@ -820,6 +950,7 @@ export async function pickSelector(cfg, fieldKey) {
   if (!dataUrl) {
     throw new Error('缺少 dataUrl')
   }
+  const safeDataUrl = assertBrowserUrl(dataUrl, 'dataUrl')
 
   const isTableMode = fieldKey === 'modelTable'
   const tipText = isTableMode
@@ -984,9 +1115,11 @@ export async function pickSelector(cfg, fieldKey) {
     // 然后用 waitMs 给 SPA 渲染时间
     console.log(`[pick] 开始导航到 ${dataUrl}`)
     try {
-      await page.goto(dataUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      const dataResponse = await page.goto(safeDataUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      if (isAuthHttpStatus(dataResponse?.status())) throw new Error('登录态已失效，请重新登录')
       console.log(`[pick] 导航成功，当前 URL: ${page.url()}`)
     } catch (gotoErr) {
+      if (gotoErr.message === '登录态已失效，请重新登录') throw gotoErr
       console.error(`[pick] 导航失败:`, gotoErr.message)
       // 导航失败时，在页面上显示错误提示，让用户能看到
       try {
@@ -1003,6 +1136,9 @@ export async function pickSelector(cfg, fieldKey) {
       await page.waitForTimeout(10_000)
       return { selector: null, text: '', error: gotoErr.message }
     }
+
+    const redirectError = getLoginRedirectError(page.url(), cfg.loginUrl)
+    if (redirectError) throw new Error(redirectError)
 
     // 给 SPA 一点渲染时间
     if (waitMs > 0) await page.waitForTimeout(waitMs)
@@ -1028,6 +1164,9 @@ export async function pickSelector(cfg, fieldKey) {
       console.log(`[pick] 读取结果失败:`, e.message)
     }
 
+    if (getProviderBrowserEpoch(id) === browserEpoch) {
+      await saveAuthState(context, authFile)
+    }
     return result
   } finally {
     try { await browser.close() } catch {}

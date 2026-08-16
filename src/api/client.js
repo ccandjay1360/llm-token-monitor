@@ -1,14 +1,23 @@
 // 前端 API 客户端：统一封装对后端代理的调用
 
-const BASE = window.location.protocol === 'file:'
+const desktopApi = window.tokenMonitor?.api
+const BASE = desktopApi?.baseUrl || (window.location.protocol === 'file:'
   ? 'http://127.0.0.1:3002/api'
-  : '/api'
+  : '/api')
+
+function withApiAuth(options = {}) {
+  return {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(desktopApi?.token ? { 'x-token-monitor-auth': desktopApi.token } : {}),
+      ...options.headers,
+    },
+  }
+}
 
 async function request(pathname, options = {}) {
-  const res = await fetch(`${BASE}${pathname}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
+  const res = await fetch(`${BASE}${pathname}`, withApiAuth(options))
   if (!res.ok) {
     let detail = ''
     try {
@@ -56,27 +65,25 @@ export const saveConfig = (config) =>
 // provider 完整配置作为 body 传入，避免依赖 config.json 中已保存的内容
 export function triggerBrowserLogin(provider) {
   const id = encodeURIComponent(provider.id)
-  return fetch(`${BASE}/browser/login/${id}`, {
+  return fetch(`${BASE}/browser/login/${id}`, withApiAuth({
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider }),
-  }).then((r) => r.json())
+  })).then((r) => r.json())
 }
 
 // 探测选择器（不保存配置，仅返回当前选择器抓到的文本，用于调试）
 // provider 完整配置传入，dataUrl/selectors 可在 body 中覆盖（已由调用方填充）
 export function probeBrowserSelectors(provider) {
   const id = encodeURIComponent(provider.id)
-  return fetch(`${BASE}/browser/probe/${id}`, {
+  return fetch(`${BASE}/browser/probe/${id}`, withApiAuth({
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       provider,
       dataUrl: provider.dataUrl,
       selectors: provider.selectors,
       waitMs: provider.waitMs,
     }),
-  }).then((r) => r.json())
+  })).then((r) => r.json())
 }
 
 // 自动识别数据页中的标量字段和模型表选择器
@@ -99,16 +106,15 @@ export function autoDetectBrowserSelectors(provider) {
 // fieldKey 决定拾取模式：'modelTable' 时拾取整个 <table>
 export function pickBrowserSelector(provider, fieldKey) {
   const id = encodeURIComponent(provider.id)
-  return fetch(`${BASE}/browser/pick/${id}`, {
+  return fetch(`${BASE}/browser/pick/${id}`, withApiAuth({
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       provider,
       dataUrl: provider.dataUrl,
       waitMs: provider.waitMs,
       fieldKey,
     }),
-  }).then((r) => r.json())
+  })).then((r) => r.json())
 }
 
 // ===== 单位换算 =====

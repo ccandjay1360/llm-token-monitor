@@ -51,7 +51,7 @@ function Dashboard() {
         <AlertTriangle size={20} />
         <div>
           <p>无法连接后端代理服务</p>
-          <p className={styles.errorHint}>请确认已运行 <code>npm run dev:all</code>，且 3002 端口可用</p>
+          <p className={styles.errorHint}>请确认已运行 <code>npm run dev:all</code>，且 3017 端口可用</p>
           <p className={styles.errorDetail}>{error}</p>
         </div>
       </div>

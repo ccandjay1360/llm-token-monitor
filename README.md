@@ -78,7 +78,7 @@ npm run dev:desktop
 开发模式会同时启动：
 
 - Vite 前端：`http://127.0.0.1:5173`
-- Express 后端：`http://127.0.0.1:3002`
+- Express 后端：`http://127.0.0.1:3017`
 - Electron 桌面挂件
 
 只启动前后端网页：

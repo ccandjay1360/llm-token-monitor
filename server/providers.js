@@ -10,10 +10,31 @@ import {
   fetchViaBrowser,
   hasAuthState,
 } from './browser.js'
+import { defaultConfig, validateConfig } from './config.js'
 
 // ===== OneAPI / NewAPI 兼容适配器 =====
-async function oneApiFetch(cfg) {
+function normalizeRequestTimeout(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 15_000
+  return Math.min(Math.max(Math.round(number), 100), 60_000)
+}
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(`请求超时: ${url}`)
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function oneApiFetch(cfg) {
   const { baseUrl, apiToken } = cfg
+  const timeoutMs = normalizeRequestTimeout(cfg.requestTimeoutMs)
   const headers = {
     Authorization: `Bearer ${apiToken}`,
     'Content-Type': 'application/json',
@@ -21,9 +42,15 @@ async function oneApiFetch(cfg) {
   const base = baseUrl.replace(/\/$/, '')
 
   const [userRes, logRes] = await Promise.allSettled([
-    fetch(`${base}/api/user/self`, { headers }),
-    fetch(`${base}/api/log/self?p=1&type=0&limit=100`, { headers }),
+    fetchWithTimeout(`${base}/api/user/self`, { headers }, timeoutMs),
+    fetchWithTimeout(`${base}/api/log/self?p=1&type=0&limit=100`, { headers }, timeoutMs),
   ])
+
+  const hasUsableResponse = (result) => result.status === 'fulfilled' && result.value.ok
+  if (!hasUsableResponse(userRes) && !hasUsableResponse(logRes)) {
+    const reason = userRes.status === 'rejected' ? userRes.reason : logRes.reason
+    throw reason instanceof Error ? reason : new Error('中转站请求失败')
+  }
 
   let quota = 0
   let usedQuota = 0
@@ -72,7 +99,7 @@ const newApiFetch = oneApiFetch
 //   balance / todayTokens / todayCost / cacheHitRate  — 浏览器原生字段（美元值 / 数字）
 //   models                  — 模型分布（quota 已转为 OneAPI 单位）
 //   logs                    — 浏览器模式无逐条日志
-const QUOTA_PER_DOLLAR = 500000
+export const QUOTA_PER_DOLLAR = 500000
 
 async function browserFetch(cfg) {
   const result = await fetchViaBrowser(cfg)
@@ -165,11 +192,17 @@ export function providerHasAuth(cfg) {
 }
 
 export function loadConfig(configPath) {
-  if (!fs.existsSync(configPath)) {
-    return { refreshIntervalSec: 300, providers: [] }
+  if (!fs.existsSync(configPath)) return defaultConfig()
+
+  let cfg
+  try {
+    const raw = fs.readFileSync(configPath, 'utf-8')
+    cfg = validateConfig(JSON.parse(raw))
+  } catch (error) {
+    console.warn(`[config] invalid configuration, using defaults: ${error.message}`)
+    return defaultConfig()
   }
-  const raw = fs.readFileSync(configPath, 'utf-8')
-  const cfg = JSON.parse(raw)
+
   for (const p of cfg.providers || []) {
     const envKey = `PROVIDER_${p.id.toUpperCase().replace(/-/g, '_')}_TOKEN`
     if (process.env[envKey]) p.apiToken = process.env[envKey]

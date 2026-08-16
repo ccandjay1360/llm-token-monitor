@@ -20,6 +20,7 @@ function Widget() {
     [data],
   )
 
+  // 手动刷新：触发后端真实抓取（浏览器访问站点），按钮专用
   const refreshCurrentProvider = useCallback(async () => {
     if (!providerId || refreshingRef.current) return
     refreshingRef.current = true
@@ -33,12 +34,15 @@ function Widget() {
     }
   }, [providerId, refetch])
 
+  // 自动轮询：只读缓存聚合（轻量 GET /api/stats）。
+  // 真实抓取由后台调度器按 refreshIntervalSec 执行；
+  // 若这里每 25s 强制 POST /refresh，会与调度器叠加成双倍浏览器启动与站点请求
   useEffect(() => {
     const timer = setInterval(() => {
-      void refreshCurrentProvider()
+      void refetch()
     }, AUTO_REFRESH_MS)
     return () => clearInterval(timer)
-  }, [refreshCurrentProvider])
+  }, [refetch])
 
   const handleRefresh = refreshCurrentProvider
 

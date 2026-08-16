@@ -1,4 +1,4 @@
-export function getDailyDateRange(now = new Date(), timezone = 'Asia/Shanghai') {
+export function dateKeyInTimezone(now = new Date(), timezone = 'Asia/Shanghai') {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone,
     year: 'numeric',
@@ -6,9 +6,13 @@ export function getDailyDateRange(now = new Date(), timezone = 'Asia/Shanghai') 
     day: '2-digit',
   })
 
+  return formatter.format(now)
+}
+
+export function getDailyDateRange(now = new Date(), timezone = 'Asia/Shanghai') {
   return {
-    startDate: formatter.format(now),
-    endDate: formatter.format(new Date(now.getTime() + 24 * 60 * 60 * 1000)),
+    startDate: dateKeyInTimezone(now, timezone),
+    endDate: dateKeyInTimezone(new Date(now.getTime() + 24 * 60 * 60 * 1000), timezone),
   }
 }
 

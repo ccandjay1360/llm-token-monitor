@@ -3,13 +3,14 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { writeJsonAtomically } from './json-store.js'
 
 const DATA_DIR = process.env.TOKEN_MONITOR_DATA_DIR
   ? path.resolve(process.env.TOKEN_MONITOR_DATA_DIR)
   : import.meta.dirname
 fs.mkdirSync(DATA_DIR, { recursive: true })
 const CACHE_FILE = path.join(DATA_DIR, 'cache.json')
-const TTL_MS = 60 * 1000 // 内存缓存 1 分钟
+const DEFAULT_TTL_MS = 60 * 1000 // 内存缓存默认 1 分钟
 
 let memCache = null
 let memCacheAt = 0
@@ -27,20 +28,23 @@ export function readLastCache() {
   }
 }
 
-export function readCache() {
+// ttlMs 由调用方传入（跟随配置的 refreshIntervalSec），
+// 避免硬编码 TTL 与用户配置的刷新间隔脱节：否则间隔设长后，
+// 每次读 stats 仍会在 TTL 过期后触发全量刷新，配置形同虚设
+export function readCache(ttlMs = DEFAULT_TTL_MS) {
   const now = Date.now()
   if (memCache) {
-    return now - memCacheAt < TTL_MS ? memCache : null
+    return now - memCacheAt < ttlMs ? memCache : null
   }
   const persisted = readLastCache()
-  return persisted && now - memCacheAt < TTL_MS ? persisted : null
+  return persisted && now - memCacheAt < ttlMs ? persisted : null
 }
 
 export function writeCache(data) {
   memCache = data
   memCacheAt = Date.now()
   try {
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2))
+    writeJsonAtomically(CACHE_FILE, data)
   } catch (err) {
     console.warn('[store] 写入缓存失败:', err.message)
   }
